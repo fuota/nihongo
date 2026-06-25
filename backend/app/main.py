@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Query
 from sqlalchemy.orm import Session
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer, HTTPAuthorizationCredentials
 
@@ -53,4 +53,34 @@ def get_current_user(
         "jlpt_level": user.jlpt_level,
         "streak_count": user.streak_count,
         "created_at": user.created_at,
+    }
+
+
+@app.get("/vocab")
+def get_vocab(
+    level: str = Query(default="N5", description="JLPT level, e.g. N5"),
+    limit: int = Query(default=10, ge=1, le=100, description="Max results to return"),
+    db: Session = Depends(get_db),
+):
+    vocab_cards = (
+        db.query(models.VocabCard)
+        .filter(models.VocabCard.jlpt_level == level)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "level": level,
+        "count": len(vocab_cards),
+        "results": [
+            {
+                "id": card.id,
+                "kanji": card.kanji,
+                "reading": card.reading,
+                "meaning": card.meaning,
+                "example_sentence": card.example_sentence,
+                "jlpt_level": card.jlpt_level,
+            }
+            for card in vocab_cards
+        ],
     }
