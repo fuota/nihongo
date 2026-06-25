@@ -35,6 +35,7 @@ class User(Base):
 
     sessions = relationship("LearningSession", back_populates="user")
     mistakes = relationship("UserMistake", back_populates="user")
+    card_progress = relationship("UserCardProgress", back_populates="user")
     agent_logs = relationship("AgentLog", back_populates="user")
 
 
@@ -118,7 +119,7 @@ class SessionItem(Base):
     session_id = Column(
         UUID(as_uuid=False), ForeignKey("learning_sessions.id"), nullable=False
     )
-    module_type = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)  # "vocab" | "writing" | "grammar" | "reading"
     content_id = Column(String, nullable=True)
     order_index = Column(Integer, default=0)
     is_correct = Column(Boolean, nullable=True)
@@ -133,7 +134,7 @@ class UserMistake(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
     content_id = Column(String, nullable=True)
-    module_type = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)  # "vocab" | "writing" | "grammar"
     error_type = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -152,3 +153,26 @@ class AgentLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="agent_logs")
+
+
+class UserCardProgress(Base):
+    """
+    SM-2 spaced repetition state. Exactly one row per (user, content_type,
+    content_id) -- unlike UserMistake, this is NOT an event log. Each
+    review updates this same row in place rather than inserting a new one.
+    """
+    __tablename__ = "user_card_progress"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    content_type = Column(String, nullable=False)  # "vocab" | "writing"
+    content_id = Column(String, nullable=False)
+
+    ease_factor = Column(Float, default=2.5)
+    repetitions = Column(Integer, default=0)
+    interval_days = Column(Integer, default=1)
+    next_review_date = Column(DateTime, nullable=True)
+    last_reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="card_progress")
