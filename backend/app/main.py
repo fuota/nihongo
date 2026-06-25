@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Optional
 
-from fastapi import FastAPI, Depends, Query, HTTPException
+from fastapi import FastAPI, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer, HTTPAuthorizationCredentials
@@ -17,16 +18,16 @@ clerk_config = ClerkConfig(
 clerk_auth_guard = ClerkHTTPBearer(config=clerk_config)
 
 
-def get_or_create_user(credentials: HTTPAuthorizationCredentials, db: Session) -> models.User:
-    payload = credentials.decoded
-    clerk_user_id = payload.get("sub")
-
+def get_or_create_user(db: Session, clerk_user_id: str, email: Optional[str]) -> models.User:
+    """
+    Shared get-or-create logic, used by /me and any other endpoint that
+    needs to resolve a Clerk identity to our own User row.
+    """
     user = db.query(models.User).filter(
         models.User.clerk_user_id == clerk_user_id
     ).first()
 
     if user is None:
-        email = payload.get("email")
         user = models.User(clerk_user_id=clerk_user_id, email=email)
         db.add(user)
         db.commit()
@@ -50,7 +51,8 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(clerk_auth_guard),
     db: Session = Depends(get_db),
 ):
-    user = get_or_create_user(credentials, db)
+    payload = credentials.decoded
+    user = get_or_create_user(db, payload.get("sub"), payload.get("email"))
 
     return {
         "id": user.id,
@@ -92,10 +94,12 @@ def get_vocab(
     }
 
 
+# --- Review / SRS endpoints ---
+
 class ReviewGradeRequest(BaseModel):
     content_type: str = Field(..., description="'vocab' or 'writing'")
     content_id: str = Field(..., description="id of the VocabCard or WritingCharacter")
-    grade: int = Field(..., ge=0, le=5, description="0-5 self-graded recall quality")
+    grade: int = Field(..., ge=0, le=5, description="0-5 self-graded recall score")
 
 
 @app.post("/review/grade")
@@ -104,10 +108,8 @@ def grade_review(
     credentials: HTTPAuthorizationCredentials = Depends(clerk_auth_guard),
     db: Session = Depends(get_db),
 ):
-    user = get_or_create_user(credentials, db)
-
-    if body.content_type not in ("vocab", "writing"):
-        raise HTTPException(status_code=400, detail="content_type must be 'vocab' or 'writing'")
+    payload = credentials.decoded
+    user = get_or_create_user(db, payload.get("sub"), payload.get("email"))
 
     progress = (
         db.query(models.UserCardProgress)
@@ -155,5 +157,40 @@ def grade_review(
         "interval_days": progress.interval_days,
         "repetitions": progress.repetitions,
         "next_review_date": progress.next_review_date,
-        "last_reviewed_at": progress.last_reviewed_at,
+    }
+
+
+@app.get("/review/due")
+def get_due_reviews(
+    credentials: HTTPAuthorizationCredentials = Depends(clerk_auth_guard),
+    db: Session = Depends(get_db),
+):
+    payload = credentials.decoded
+    user = get_or_create_user(db, payload.get("sub"), payload.get("email"))
+
+    now = datetime.utcnow()
+
+    due_items = (
+        db.query(models.UserCardProgress)
+        .filter(
+            models.UserCardProgress.user_id == user.id,
+            models.UserCardProgress.next_review_date <= now,
+        )
+        .all()
+    )
+
+    return {
+        "count": len(due_items),
+        "results": [
+            {
+                "content_type": item.content_type,
+                "content_id": item.content_id,
+                "ease_factor": item.ease_factor,
+                "interval_days": item.interval_days,
+                "repetitions": item.repetitions,
+                "next_review_date": item.next_review_date,
+                "last_reviewed_at": item.last_reviewed_at,
+            }
+            for item in due_items
+        ],
     }
