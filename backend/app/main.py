@@ -9,6 +9,7 @@ from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer, HTTPAuthorizationCr
 from app.database import get_db
 from app import models
 from app.srs import calculate_next_review, SRSState
+from app.agents.session_builder import run_session_builder_agent
 
 app = FastAPI(title="Nihongo API")
 
@@ -192,5 +193,69 @@ def get_due_reviews(
                 "last_reviewed_at": item.last_reviewed_at,
             }
             for item in due_items
+        ],
+    }
+
+
+@app.post("/session/generate")
+def generate_session(
+    credentials: HTTPAuthorizationCredentials = Depends(clerk_auth_guard),
+    db: Session = Depends(get_db),
+):
+    payload = credentials.decoded
+    user = get_or_create_user(db, payload.get("sub"), payload.get("email"))
+
+    agent_result = run_session_builder_agent(db, user.id)
+    session_plan = agent_result["session_plan"]
+    # Expected shape of session_plan:
+    # {
+    #   "reasoning": "...",
+    #   "items": [{"content_type": "vocab"|"writing"|"grammar", "content_id": "...", "reason": "due_review"|"weak_area"|"new_content"}]
+    # }
+
+    # Create the actual LearningSession row
+    learning_session = models.LearningSession(
+        user_id=user.id,
+        mode="serious",
+        status="in_progress",
+    )
+    db.add(learning_session)
+    db.flush()  # need learning_session.id before creating SessionItems
+
+    # Create one SessionItem per item in the agent's plan
+    session_items = []
+    for index, item in enumerate(session_plan.get("items", [])):
+        session_item = models.SessionItem(
+            session_id=learning_session.id,
+            content_type=item["content_type"],
+            content_id=item["content_id"],
+            order_index=index,
+        )
+        db.add(session_item)
+        session_items.append(session_item)
+
+    # Log the agent's full reasoning + tool call trace for observability
+    agent_log = models.AgentLog(
+        user_id=user.id,
+        agent_name="SessionBuilderAgent",
+        reasoning=session_plan.get("reasoning", ""),
+        tool_calls=agent_result["tool_calls"],
+        decision=session_plan,
+    )
+    db.add(agent_log)
+
+    db.commit()
+    db.refresh(learning_session)
+
+    return {
+        "session_id": learning_session.id,
+        "reasoning": session_plan.get("reasoning", ""),
+        "items": [
+            {
+                "content_type": si.content_type,
+                "content_id": si.content_id,
+                "order_index": si.order_index,
+            }
+            for si in session_items
         ],
     }
