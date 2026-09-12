@@ -1,10 +1,11 @@
 """
 Tool functions for SessionBuilderAgent.
 
-Each function here corresponds 1:1 to a tool Claude can call. They are
-plain Python functions that take a db session + arguments and return
-plain JSON-serializable dicts/lists -- no Anthropic-specific code here,
-that lives in the agent orchestration layer (session_builder.py).
+Each function here corresponds 1:1 to a tool the model can call. They
+are plain Python functions that take a db session + arguments and
+return plain JSON-serializable dicts/lists -- no LLM-vendor-specific
+code here, that lives in the agent orchestration layer
+(session_builder.py) and the provider abstraction (llm.py).
 """
 
 from datetime import datetime

@@ -1,23 +1,21 @@
 """
 SessionBuilderAgent.
 
-Runs a real Anthropic tool-use loop: Claude decides which of the 4
-tools to call (and with what arguments), we execute the matching real
-Python function against the database, feed the result back, and repeat
-until Claude returns a final structured session plan.
+Runs a real tool-use loop: the model decides which of the 4 tools to
+call (and with what arguments), we execute the matching real Python
+function against the database, feed the result back, and repeat until
+the model returns a final structured session plan.
+
+The underlying model/vendor is swappable -- see app/agents/llm.py --
+via the LLM_PROVIDER env var ("anthropic" | "openai" | "deepseek").
 """
 
 import json
-import os
 
-from anthropic import Anthropic
 from sqlalchemy.orm import Session
 
 from app.agents import tools as agent_tools
-
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-MODEL = "claude-sonnet-4-6"
+from app.agents.llm import ToolResult, get_llm_provider
 
 TOOL_SCHEMAS = [
     {
@@ -122,80 +120,41 @@ def _execute_tool(db: Session, user_id: str, tool_name: str, tool_input: dict) -
 
 
 def run_session_builder_agent(db: Session, user_id: str) -> dict:
-    messages = [
-        {
-            "role": "user",
-            "content": f"Build today's session for user_id={user_id}.",
-        }
-    ]
+    provider = get_llm_provider()
+    provider.start_conversation(
+        system=SYSTEM_PROMPT,
+        user_message=f"Build today's session for user_id={user_id}.",
+    )
 
     tool_call_log = []
-    raw_text_fragments = []
 
     MAX_ROUNDS = 6
 
     for _ in range(MAX_ROUNDS):
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=2000,
-            system=SYSTEM_PROMPT,
-            tools=TOOL_SCHEMAS,
-            messages=messages,
-        )
+        turn = provider.step(TOOL_SCHEMAS)
 
-        for block in response.content:
-            if block.type == "text" and block.text.strip():
-                raw_text_fragments.append(block.text.strip())
-
-        if response.stop_reason != "tool_use":
-            final_text = "".join(raw_text_fragments) if raw_text_fragments else ""
-            for block in response.content:
-                if block.type == "text":
-                    final_text = block.text.strip()
-
-            session_plan = _parse_session_plan(final_text)
-
+        if turn.is_final:
+            session_plan = _parse_session_plan(turn.text)
             return {
                 "session_plan": session_plan,
                 "tool_calls": tool_call_log,
-                "raw_reasoning_text": final_text,
+                "raw_reasoning_text": turn.text,
             }
 
-        messages.append({"role": "assistant", "content": response.content})
-        
-        '''
-        CLAUDE EXAMPLE RESPONSE FOR TOOL USE:
-            {
-                "content": [
-                    {"type": "tool_use", "id": "toolu_01ABC", "name": "get_due_reviews", "input": {...}},
-                    {"type": "tool_use", "id": "toolu_02XYZ", "name": "get_weak_areas", "input": {...}}
-                ]
-            }
-        '''
-        tool_results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
-
-            result = _execute_tool(db, user_id, block.name, block.input)
+        results = []
+        for call in turn.tool_calls:
+            output = _execute_tool(db, user_id, call.name, call.input)
 
             tool_call_log.append(
                 {
-                    "tool_name": block.name,
-                    "input": block.input,
-                    "result": result,
+                    "tool_name": call.name,
+                    "input": call.input,
+                    "result": output,
                 }
             )
+            results.append(ToolResult(id=call.id, name=call.name, output=output))
 
-            tool_results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": json.dumps(result),
-                }
-            )
-
-        messages.append({"role": "user", "content": tool_results})
+        provider.submit_tool_results(results)
 
     raise RuntimeError(
         f"SessionBuilderAgent exceeded {MAX_ROUNDS} tool-use rounds without a final answer"
