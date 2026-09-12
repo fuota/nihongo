@@ -70,6 +70,7 @@ class VocabCard(Base):
     meaning = Column(String, nullable=False)
     example_sentence = Column(Text, nullable=True)
     jlpt_level = Column(String, default="N5")
+    source = Column(String, nullable=False, default="seeded")  # "seeded" | "api_fetched"
     created_at = Column(DateTime, default=datetime.utcnow)
 
     character_links = relationship("VocabCharacterLink", back_populates="vocab_card")
@@ -150,6 +151,10 @@ class AgentLog(Base):
     reasoning = Column(Text, nullable=True)
     tool_calls = Column(JSON, nullable=True)
     decision = Column(JSON, nullable=True)
+    tool_name = Column(String, nullable=True)
+    success = Column(Boolean, nullable=True)
+    fallback_used = Column(Boolean, nullable=False, default=False)
+    error_detail = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="agent_logs")
