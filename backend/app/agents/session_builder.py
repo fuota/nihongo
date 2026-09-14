@@ -16,6 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.agents import tools as agent_tools
 from app.agents.llm import ToolResult, get_llm_provider
+from app.utils.retry import call_with_retry
+
+AGENT_NAME = "SessionBuilderAgent"
 
 TOOL_SCHEMAS = [
     {
@@ -102,19 +105,49 @@ in this exact shape:
 
 def _execute_tool(db: Session, user_id: str, tool_name: str, tool_input: dict) -> dict:
     if tool_name == "get_weak_areas":
-        return agent_tools.get_weak_areas(db, user_id)
-    elif tool_name == "get_due_reviews":
-        return agent_tools.get_due_reviews(db, user_id)
-    elif tool_name == "fetch_new_content":
-        return agent_tools.fetch_new_content(
+        return call_with_retry(
             db,
-            level=tool_input["level"],
-            content_type=tool_input["content_type"],
-            exclude_ids=tool_input.get("exclude_ids", []),
-            limit=tool_input.get("limit", 5),
+            user_id=user_id,
+            agent_name=AGENT_NAME,
+            tool_name=tool_name,
+            fn=lambda: agent_tools.get_weak_areas(db, user_id),
+            fallback={"weak_areas": []},  # treat as "no weak areas known yet"
+        )
+    elif tool_name == "get_due_reviews":
+        return call_with_retry(
+            db,
+            user_id=user_id,
+            agent_name=AGENT_NAME,
+            tool_name=tool_name,
+            fn=lambda: agent_tools.get_due_reviews(db, user_id),
+            fallback={"due_count": 0, "due_items": []},  # treat as "nothing due"
+        )
+    elif tool_name == "fetch_new_content":
+        return call_with_retry(
+            db,
+            user_id=user_id,
+            agent_name=AGENT_NAME,
+            tool_name=tool_name,
+            fn=lambda: agent_tools.fetch_new_content(
+                db,
+                level=tool_input["level"],
+                content_type=tool_input["content_type"],
+                exclude_ids=tool_input.get("exclude_ids", []),
+                limit=tool_input.get("limit", 5),
+            ),
+            # fetch_new_content only ever reads the seeded DB today (no
+            # external API call yet), so failure just means an empty slot.
+            fallback={"content_type": tool_input.get("content_type"), "items": []},
         )
     elif tool_name == "get_user_profile":
-        return agent_tools.get_user_profile(db, user_id)
+        return call_with_retry(
+            db,
+            user_id=user_id,
+            agent_name=AGENT_NAME,
+            tool_name=tool_name,
+            fn=lambda: agent_tools.get_user_profile(db, user_id),
+            fallback={"jlpt_level": "N5", "streak_count": 0, "days_since_last_session": None},
+        )
     else:
         return {"error": f"unknown tool: {tool_name}"}
 
