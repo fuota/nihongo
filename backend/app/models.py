@@ -55,6 +55,7 @@ class WritingCharacter(Base):
     stroke_count = Column(Integer, nullable=False)
     stroke_paths = Column(JSON, nullable=False)
     jlpt_level = Column(String, default="N5")
+    topic = Column(String, nullable=True)  # e.g. "numbers", "time_calendar" -- for grouping into modules
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
