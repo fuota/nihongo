@@ -12,7 +12,7 @@
 
 ---
 
-## 📱 App Walkthrough & Demo
+##  App Walkthrough & Demo
 
 ### 1. Core Learning & Practice Modules
 
@@ -32,25 +32,25 @@
 
 ---
 
-## ✨ Key Features
+##  Key Features
 
-### 🤖 1. Multi-Agent Intelligent Curriculum
+###  1. Multi-Agent Intelligent Curriculum
 - **SessionBuilderAgent (`Learn > For You`)**: Inspects learner profile, streak, and known items to autonomously curate a targeted batch of new vocabulary and grammar patterns.
 - **TutorAgent (`Learn > Writing`)**: Analyzes kanji drawings recognized by vision models against past mistake history to deliver specific coaching rather than generic feedback.
 - **ReadingGeneratorAgent (`Learn > Reading`)**: Dynamically synthesizes reading passages strictly limited to the user's mastered vocabulary and grammar, complete with ruby furigana annotations and comprehension checks.
 - **QuizReviewAgent (`Drill & Reading Review`)**: Produces on-demand diagnostics dissecting *why* a mistake was made (e.g., distinguishing semantic confusions such as 牛肉 vs. ここ) rather than simply parroting the correct answer.
 - **ProgressEvaluatorAgent (`Level Progression`)**: Evaluates multi-session drill accuracy and attendance consistency every 3 completed sessions to decide whole-level advancement (N5 → N4) with fail-closed safety.
 
-### ✍️ 2. Kanji Handwriting Canvas & Vision Recognition
+###  2. Kanji Handwriting Canvas & Vision Recognition
 - Built using **React Native Skia** and **React Native Gesture Handler** for responsive stroke drawing and instant image snapshot export.
 - Interactive SVG stroke order animations powered by **KanjiVG** path data with step-by-step stroke replay.
 - Vision-capable model integration (`POST /kanji/recognize`) to identify drawn kanji with confidence scoring and feedback.
 
-### 📚 3. SuperMemo SM-2 Spaced Repetition (SRS)
+###  3. SuperMemo SM-2 Spaced Repetition (SRS)
 - Pure Python implementation of the **SuperMemo SM-2** algorithm (`backend/app/srs.py`) computing intervals, repetitions, and ease factors.
 - **Strict State Separation**: Clear distinction between **Learnt** (`UserLearntItem` — discovered through study modules) and **Drill-Enrolled** (`UserCardProgress` — active in the SM-2 review queue).
 
-### 🔍 4. Hybrid Data Sourcing & Offline-Ready Cache
+###  4. Hybrid Data Sourcing & Offline-Ready Cache
 - Local PostgreSQL database serves as the source of truth for ~800 N5 words, 500+ kanji, and standard grammar patterns.
 - Automatic **Jisho / JMdict API fallback** fetches missing words on-demand and caches them into `VocabCard` with `source='api_fetched'` so they immediately become eligible for SRS scheduling.
 - On-device Text-to-Speech pronunciation via `expo-speech` with zero backend storage overhead.
@@ -122,7 +122,7 @@ flowchart TD
 
 ---
 
-## 🛡️ Resilience & Production Engineering
+##  Resilience & Production Engineering
 
 ### 1. Unified Retry & Fallback Layer (`app/utils/retry.py`)
 All tool calls made by autonomous agents are wrapped in exponential backoff retries (e.g., 0.5s, 1.0s, 2.0s). If an external API or database query fails repeatedly:
@@ -154,7 +154,7 @@ To ensure agent behavior remains dependable across prompt iterations and model u
 
 ---
 
-## 🛠️ Real Engineering Failures & What We Learned ("What Broke")
+##  Real Engineering Failures & What We Learned ("What Broke")
 
 Building agentic mobile experiences exposes unique challenges at the intersection of native gestures, vision models, and LLM orchestration:
 
@@ -285,7 +285,7 @@ User (clerk_user_id, jlpt_level, streak_count, session_item_count)
 
 ---
 
-## ⚖️ Attribution & Credits
+##  Attribution & Credits
 
 - **KanjiVG**: Kanji stroke order diagrams and SVG path data are sourced from [KanjiVG](https://kanjivg.tagaini.net/) by Ulrich Apel and contributors, licensed under [Creative Commons Attribution-ShareAlike 3.0 (CC BY-SA 3.0)](https://creativecommons.org/licenses/by-sa/3.0/).
 - **Jisho.org & JMdict**: Vocabulary definitions and lexical data derived from the [EDRDG](http://www.edrdg.org/) JMdict project and Jisho's public search API.
@@ -293,6 +293,6 @@ User (clerk_user_id, jlpt_level, streak_count, session_item_count)
 
 ---
 
-## 📄 License
+##  License
 
 This repository is licensed under the [MIT License](LICENSE). Kanji stroke order data is used under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
