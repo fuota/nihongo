@@ -62,38 +62,38 @@
 ```mermaid
 flowchart TD
     subgraph Mobile ["Mobile App (Expo / React Native)"]
-        UI[User Interface & Screens]
-        Canvas[Skia Handwriting Canvas]
-        TTS[On-Device TTS - expo-speech]
+        UI["User Interface & Screens"]
+        Canvas["Skia Handwriting Canvas"]
+        TTS["On-Device TTS (expo-speech)"]
     end
 
     subgraph Backend ["FastAPI Backend"]
-        Router[FastAPI API Router]
-        Auth[Clerk Authentication]
-        SRS[SM-2 Spaced Repetition Engine]
-        Retry[Resilience & Retry Layer]
+        Router["FastAPI API Router"]
+        Auth["Clerk Authentication"]
+        SRS["SM-2 Spaced Repetition Engine"]
+        Retry["Resilience & Retry Layer"]
         
         subgraph Agents ["Agent Layer (app/agents)"]
-            SBA[SessionBuilderAgent]
-            Tutor[TutorAgent]
-            RGA[ReadingGeneratorAgent]
-            QRA[QuizReviewAgent]
-            PEA[ProgressEvaluatorAgent]
+            SBA["SessionBuilderAgent"]
+            Tutor["TutorAgent"]
+            RGA["ReadingGeneratorAgent"]
+            QRA["QuizReviewAgent"]
+            PEA["ProgressEvaluatorAgent"]
         end
         
-        LLM[LLM Provider Abstraction<br/>Anthropic | OpenAI | DeepSeek]
+        LLM["LLM Provider Abstraction<br/>(Anthropic / OpenAI / DeepSeek)"]
     end
 
     subgraph Storage ["Data Layer"]
-        PG[(PostgreSQL 16)]
-        Redis[(Redis 7)]
-        AgentLog[(Agent Audit Logs)]
+        PG[("PostgreSQL 16")]
+        Redis[("Redis 7")]
+        AgentLog[("Agent Audit Logs")]
     end
 
     subgraph External ["External Services"]
-        Clerk[Clerk Auth API]
-        Jisho[Jisho / JMdict API]
-        KanjiVG[KanjiVG SVG Strokes]
+        Clerk["Clerk Auth API"]
+        Jisho["Jisho / JMdict API"]
+        KanjiVG["KanjiVG SVG Strokes"]
     end
 
     UI -->|REST + Bearer Token| Router
