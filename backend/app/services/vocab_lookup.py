@@ -21,8 +21,35 @@ from app import models
 
 JISHO_SEARCH_URL = "https://jisho.org/api/v1/search/words"
 
+_JLPT_RANK = {"n5": 0, "n4": 1, "n3": 2, "n2": 3, "n1": 4}
 
-def _card_to_result(card: models.VocabCard, status: str) -> dict:
+
+def _pick_best_entry(data: list) -> dict:
+    """
+    Jisho's own ranking doesn't track word commonality for bare-kana
+    queries -- e.g. searching "ここ" ranks 個々 ("individual", N1) above
+    此処 ("here", N5). Since this app is JLPT-focused, prefer whichever
+    result has the easiest JLPT tag (most likely the everyday word a
+    learner actually meant); entries with no JLPT tag sort last, and
+    Python's sort is stable so Jisho's original order still breaks ties.
+    """
+
+    def rank(entry: dict) -> tuple:
+        tags = entry.get("jlpt") or []
+        levels = [_JLPT_RANK[t.split("-")[-1]] for t in tags if t.split("-")[-1] in _JLPT_RANK]
+        return (0, min(levels)) if levels else (1, 99)
+
+    return sorted(data, key=rank)[0]
+
+
+def _card_to_result(db: Session, card: models.VocabCard, status: str) -> dict:
+    links = (
+        db.query(models.WritingCharacter)
+        .join(models.VocabCharacterLink, models.VocabCharacterLink.character_id == models.WritingCharacter.id)
+        .filter(models.VocabCharacterLink.vocab_card_id == card.id)
+        .all()
+    )
+
     return {
         "status": status,
         "id": card.id,
@@ -30,8 +57,12 @@ def _card_to_result(card: models.VocabCard, status: str) -> dict:
         "reading": card.reading,
         "meaning": card.meaning,
         "example_sentence": card.example_sentence,
+        "example_sentence_en": card.example_sentence_en,
+        "example_sentence_furigana": card.example_sentence_furigana,
         "jlpt_level": card.jlpt_level,
+        "topic": card.topic,
         "source": card.source,
+        "characters": [{"id": c.id, "character": c.character} for c in links],
     }
 
 
@@ -41,10 +72,12 @@ def _unavailable(word: str, reason: str) -> dict:
 
 def _extract_jlpt_level(entry: dict) -> Optional[str]:
     tags = entry.get("jlpt") or []
-    if not tags:
+    levels = [t.split("-")[-1] for t in tags if t.split("-")[-1] in _JLPT_RANK]
+    if not levels:
         return None
-    # tags look like "jlpt-n4" -> "N4"
-    return tags[0].split("-")[-1].upper()
+    # A word can carry multiple tags (e.g. "here" is both n5 and n3
+    # depending on the dictionary source) -- report the easiest one.
+    return min(levels, key=lambda l: _JLPT_RANK[l]).upper()
 
 
 def get_or_fetch_word(db: Session, word: str) -> dict:
@@ -54,7 +87,7 @@ def get_or_fetch_word(db: Session, word: str) -> dict:
         .first()
     )
     if existing is not None:
-        return _card_to_result(existing, status="found_in_db")
+        return _card_to_result(db, existing, status="found_in_db")
 
     try:
         response = requests.get(
@@ -73,7 +106,7 @@ def get_or_fetch_word(db: Session, word: str) -> dict:
     if not data:
         return _unavailable(word, "word not found on Jisho")
 
-    entry = data[0]
+    entry = _pick_best_entry(data)
     jp = entry["japanese"][0]
     kanji = jp.get("word")
     reading = jp["reading"]
@@ -96,4 +129,4 @@ def get_or_fetch_word(db: Session, word: str) -> dict:
     db.commit()
     db.refresh(new_card)
 
-    return _card_to_result(new_card, status="fetched_from_api")
+    return _card_to_result(db, new_card, status="fetched_from_api")

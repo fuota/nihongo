@@ -44,6 +44,11 @@ def call_with_retry(
             return fn()
         except Exception as e:
             last_error = e
+            # A DB-level error (not just a network/API error) leaves the
+            # session's transaction in a failed state -- every later
+            # query on it (further retries, or the AgentLog write below)
+            # would raise "current transaction is aborted" otherwise.
+            db.rollback()
 
     db.add(
         models.AgentLog(

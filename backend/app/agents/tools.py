@@ -9,7 +9,6 @@ code here, that lives in the agent orchestration layer
 """
 
 from datetime import datetime
-from typing import List
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -116,13 +115,29 @@ def get_due_reviews(db: Session, user_id: str) -> dict:
     }
 
 
-def fetch_new_content(
-    db: Session, level: str, content_type: str, exclude_ids: List[str], limit: int = 5
-) -> dict:
+def _learnt_ids(db: Session, user_id: str, content_type: str) -> set:
+    return {
+        row.content_id
+        for row in db.query(models.UserLearntItem.content_id).filter(
+            models.UserLearntItem.user_id == user_id,
+            models.UserLearntItem.content_type == content_type,
+        )
+    }
+
+
+def fetch_new_content(db: Session, user_id: str, level: str, content_type: str, limit: int = 5) -> dict:
+    """
+    Returns content the user hasn't learnt yet, at a given JLPT level.
+    Filters server-side against UserLearntItem (vocab/grammar only --
+    writing has no "learnt" state of its own) rather than relying on
+    the LLM to enumerate an exclude_ids list, which doesn't scale as
+    My Words grows into the hundreds.
+    """
     if content_type == "vocab":
         query = db.query(models.VocabCard).filter(models.VocabCard.jlpt_level == level)
-        if exclude_ids:
-            query = query.filter(models.VocabCard.id.notin_(exclude_ids))
+        learnt = _learnt_ids(db, user_id, "vocab")
+        if learnt:
+            query = query.filter(models.VocabCard.id.notin_(learnt))
         items = query.limit(limit).all()
         return {
             "content_type": "vocab",
@@ -133,12 +148,12 @@ def fetch_new_content(
         }
 
     elif content_type == "writing":
-        query = db.query(models.WritingCharacter).filter(
-            models.WritingCharacter.jlpt_level == level
+        items = (
+            db.query(models.WritingCharacter)
+            .filter(models.WritingCharacter.jlpt_level == level)
+            .limit(limit)
+            .all()
         )
-        if exclude_ids:
-            query = query.filter(models.WritingCharacter.id.notin_(exclude_ids))
-        items = query.limit(limit).all()
         return {
             "content_type": "writing",
             "items": [
@@ -153,11 +168,10 @@ def fetch_new_content(
         }
 
     elif content_type == "grammar":
-        query = db.query(models.GrammarPattern).filter(
-            models.GrammarPattern.jlpt_level == level
-        )
-        if exclude_ids:
-            query = query.filter(models.GrammarPattern.id.notin_(exclude_ids))
+        query = db.query(models.GrammarPattern).filter(models.GrammarPattern.jlpt_level == level)
+        learnt = _learnt_ids(db, user_id, "grammar")
+        if learnt:
+            query = query.filter(models.GrammarPattern.id.notin_(learnt))
         items = query.limit(limit).all()
         return {
             "content_type": "grammar",
@@ -168,6 +182,107 @@ def fetch_new_content(
         }
 
     return {"content_type": content_type, "items": [], "error": "unknown content_type"}
+
+
+def get_kanji_data(db: Session, kanji_id: str) -> dict:
+    char = db.query(models.WritingCharacter).filter(models.WritingCharacter.id == kanji_id).first()
+    if char is None:
+        return {"error": "kanji not found"}
+    return {
+        "character": char.character,
+        "meaning": char.meaning,
+        "stroke_count": char.stroke_count,
+        "onyomi": char.onyomi,
+        "kunyomi": char.kunyomi,
+    }
+
+
+def get_user_kanji_history(db: Session, user_id: str, kanji_id: str) -> dict:
+    """
+    Past mistakes logged for this user on this specific character, oldest
+    first. There's no "total attempts" counter (successful attempts
+    aren't logged anywhere), so this is a history of past *mistakes*
+    only -- enough for the agent to say "you've struggled with this
+    before" without needing a full attempt-by-attempt log.
+    """
+    mistakes = (
+        db.query(models.UserMistake)
+        .filter(
+            models.UserMistake.user_id == user_id,
+            models.UserMistake.content_type == "writing",
+            models.UserMistake.content_id == kanji_id,
+        )
+        .order_by(models.UserMistake.created_at.asc())
+        .all()
+    )
+    return {
+        "past_mistake_count": len(mistakes),
+        "past_error_types": [m.error_type for m in mistakes],
+    }
+
+
+def log_mistake(db: Session, user_id: str, kanji_id: str, error_type: str) -> dict:
+    db.add(
+        models.UserMistake(
+            user_id=user_id, content_type="writing", content_id=kanji_id, error_type=error_type
+        )
+    )
+    db.commit()
+    return {"logged": True}
+
+
+def get_known_vocab(db: Session, user_id: str, limit: int = 200) -> dict:
+    """
+    Vocab the user has explicitly marked Learnt -- the only words
+    ReadingGeneratorAgent is allowed to build a passage from. Capped at
+    `limit` (most recently learnt first) so the prompt doesn't grow
+    unbounded as My Words grows into the hundreds.
+    """
+    rows = (
+        db.query(models.UserLearntItem.content_id)
+        .filter(
+            models.UserLearntItem.user_id == user_id,
+            models.UserLearntItem.content_type == "vocab",
+        )
+        .order_by(models.UserLearntItem.learnt_at.desc())
+        .limit(limit)
+        .all()
+    )
+    ids = [row.content_id for row in rows]
+    if not ids:
+        return {"count": 0, "items": []}
+
+    cards = db.query(models.VocabCard).filter(models.VocabCard.id.in_(ids)).all()
+    return {
+        "count": len(cards),
+        "items": [
+            {"id": c.id, "kanji": c.kanji, "reading": c.reading, "meaning": c.meaning}
+            for c in cards
+        ],
+    }
+
+
+def get_known_grammar(db: Session, user_id: str, limit: int = 100) -> dict:
+    """Grammar patterns the user has explicitly marked Learnt. See get_known_vocab."""
+    rows = (
+        db.query(models.UserLearntItem.content_id)
+        .filter(
+            models.UserLearntItem.user_id == user_id,
+            models.UserLearntItem.content_type == "grammar",
+        )
+        .order_by(models.UserLearntItem.learnt_at.desc())
+        .limit(limit)
+        .all()
+    )
+    ids = [row.content_id for row in rows]
+    if not ids:
+        return {"count": 0, "items": []}
+
+    patterns = db.query(models.GrammarPattern).filter(models.GrammarPattern.id.in_(ids)).all()
+    return {
+        "count": len(patterns),
+        "items": [{"id": p.id, "pattern": p.pattern, "explanation": p.explanation} for p in patterns],
+    }
 
 
 def get_user_profile(db: Session, user_id: str) -> dict:

@@ -10,6 +10,11 @@ format internally.
 Switch providers with the LLM_PROVIDER env var: "anthropic" | "openai" |
 "deepseek". DeepSeek's API is OpenAI-compatible, so it reuses
 OpenAICompatibleProvider with a different base_url/model/api key.
+
+For image-input calls (kanji recognition), use get_vision_llm_provider()
+instead -- it reads a separate VISION_LLM_PROVIDER env var (default
+"anthropic"), since DeepSeek has no vision input and shouldn't silently
+become the vision provider just because it's the default chat one.
 """
 
 import json
@@ -55,6 +60,17 @@ class LLMProvider(ABC):
     @abstractmethod
     def submit_tool_results(self, results: List[ToolResult]) -> None:
         ...
+
+    def recognize_image(self, image_base64: str, prompt: str) -> str:
+        """
+        One-shot vision query: send a single image + text prompt, get back
+        the model's raw text response. Independent of the tool-use
+        conversation state above. Not all providers support this (e.g.
+        DeepSeek's chat API has no vision input) -- use get_vision_llm_provider()
+        to get one that does, rather than calling this on whatever
+        get_llm_provider() happens to return.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support image input")
 
 
 class AnthropicProvider(LLMProvider):
@@ -104,6 +120,29 @@ class AnthropicProvider(LLMProvider):
                 ],
             }
         )
+
+    def recognize_image(self, image_base64: str, prompt: str) -> str:
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": image_base64,
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+        )
+        return "".join(block.text for block in response.content if block.type == "text")
 
 
 def _to_openai_tools(tools: List[dict]) -> List[dict]:
@@ -165,6 +204,24 @@ class OpenAICompatibleProvider(LLMProvider):
                 }
             )
 
+    def recognize_image(self, image_base64: str, prompt: str) -> str:
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                        },
+                    ],
+                }
+            ],
+        )
+        return response.choices[0].message.content or ""
+
 
 _DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-4-6",
@@ -195,3 +252,23 @@ def get_llm_provider() -> LLMProvider:
         )
     else:
         raise ValueError(f"Unknown LLM_PROVIDER: {provider_name!r}")
+
+
+def get_vision_llm_provider() -> LLMProvider:
+    """
+    Same idea as get_llm_provider(), but for image-input calls (kanji
+    handwriting recognition). Deliberately a separate env var
+    (VISION_LLM_PROVIDER, default "anthropic") rather than reusing
+    LLM_PROVIDER: DeepSeek -- this project's default chat provider --
+    has no vision input, so recognition needs its own, independently
+    configurable choice of provider.
+    """
+    provider_name = os.getenv("VISION_LLM_PROVIDER", "anthropic").lower()
+    model = os.getenv("VISION_LLM_MODEL") or _DEFAULT_MODELS.get(provider_name)
+
+    if provider_name == "anthropic":
+        return AnthropicProvider(model=model, api_key=os.getenv("ANTHROPIC_API_KEY"))
+    elif provider_name == "openai":
+        return OpenAICompatibleProvider(model=model, api_key=os.getenv("OPENAI_API_KEY"))
+    else:
+        raise ValueError(f"VISION_LLM_PROVIDER {provider_name!r} does not support image input")
