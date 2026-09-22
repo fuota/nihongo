@@ -6,3 +6,8 @@ __pycache__/
 node_modules/
 backend/app/seeds/
 backend/terminal.sh
+
+# Third-party Anki decks used locally to import vocab/grammar data --
+# likely derived from copyrighted textbooks, not ours to redistribute
+# on a public repo. The data they seed into the DB is unaffected.
+backend/scripts/data/*.apkg
